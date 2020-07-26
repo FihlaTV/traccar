@@ -4,9 +4,7 @@ Installation instructions are available on the official website:
 
 Windows - https://www.traccar.org/windows/
 Linux   - https://www.traccar.org/linux/
-OS X    - https://www.traccar.org/mac-os/
-OpenBSD - https://www.traccar.org/openbsd/
-FreeBSD - https://www.traccar.org/freebsd/
+Docker  - https://www.traccar.org/docker/
 Other   - https://www.traccar.org/manual-installation/
 
 If you have any questions or problems visit support page:

@@ -1,169 +1,199 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 #
-# Script to create installers
+# Script to create installers for various platforms.
 #
 
 cd $(dirname $0)
 
-if [[ $# -lt 1 ]]
-then
-  echo "USAGE: $0 <version>"
+usage () {
+  echo "Usage: $0 VERSION [PLATFORM]"
+  echo "Build Traccar installers."
+  echo
+  echo "Without PLATFORM provided, builds installers for all platforms."
+  echo
+  echo "Available platforms:"
+  echo " * linux-64"
+  echo " * linux-arm"
+  echo " * windows-64"
+  echo " * other"
   exit 1
-fi
-
-VERSION=$1
-
-check_requirement () {
-  if ! eval $1 &>/dev/null
-  then
-    echo $2
-    exit 1
-  fi 
 }
 
-check_requirement "ls ../../ext-6.0.1" "Missing ../../ext-6.0.1 (https://www.sencha.com/legal/GPL/)"
-check_requirement "ls wrapper-delta-pack-*.tar.gz" "Missing wrapper-delta-pack-*.tar.gz (http://wrapper.tanukisoftware.com/doc/english/download.jsp)"
-check_requirement "ls wrapper-windows-x86-64-*.zip" "Missing wrapper-windows-x86-64-*.zip (http://www.krenger.ch/blog/tag/java-service-wrapper/)"
-check_requirement "ls innosetup-*.exe" "Missing isetup-*.exe (http://www.jrsoftware.org/isdl.php)"
-check_requirement "which sencha" "Missing sencha cmd package (https://www.sencha.com/products/extjs/cmd-download/)"
-check_requirement "which wine" "Missing wine package"
-check_requirement "which innoextract" "Missing innoextract package"
-check_requirement "which makeself" "Missing makeself package"
+if [[ $# -lt 1 ]]
+then
+  usage
+fi
+
+info () {
+  echo -e "[\033[1;34mINFO\033[0m] "$1
+}
+
+ok () {
+  echo -e "[\033[1;32m OK \033[0m] "$1
+}
+
+warn () {
+  echo -e "[\033[1;31mWARN\033[0m] "$1
+}
+
+VERSION=$1
+PLATFORM=${2:-all}
+export EXTJS_PATH=$(cd ../..; pwd)/ext-6.2.0
+PREREQ=true
+
+check_requirement () {
+  if ! eval $2 &>/dev/null
+  then
+	warn "$3"
+	PREREQ=false
+  else
+	ok "$@"
+  fi
+}
+
+info "Checking build requirements for platform: "$PLATFORM
+check_requirement "Traccar server archive" "ls ../target/tracker-server.jar" "Missing traccar archive"
+check_requirement "Traccar web interface" "ls ../traccar-web/tools/minify.sh" "Missing traccar-web sources"
+check_requirement "Zip" "which zip" "Missing zip binary"
+check_requirement "Unzip" "which unzip" "Missing unzip binary"
+check_requirement "Ext JS" "ls $EXTJS_PATH" "ExtJS not found in $EXTJS_PATH (https://www.sencha.com/legal/GPL/)"
+check_requirement "Sencha Cmd" "which sencha" "Missing Sencha Cmd package (https://www.sencha.com/products/extjs/cmd-download/)"
+if [ $PLATFORM != "other" ]; then
+  check_requirement "Jlink" "which jlink" "Missing jlink binary"
+fi
+if [ $PLATFORM = "all" -o $PLATFORM = "windows-64" ]; then
+  check_requirement "Inno Extractor" "which innoextract" "Missing innoextract binary"
+  check_requirement "Inno Setup" "ls i*setup-*.exe" "Missing Inno Setup (http://www.jrsoftware.org/isdl.php)"
+  check_requirement "Windows 64 Java" "ls java-*.windows.ojdkbuild.x86_64.zip" "Missing Windows 64 Java (https://github.com/ojdkbuild/ojdkbuild)"
+  check_requirement "Wine" "which wine" "Missing wine binary"
+fi
+if [ $PLATFORM = "all" -o $PLATFORM = "linux-64" -o $PLATFORM = "linux-arm" ]; then
+  check_requirement "Makeself" "which makeself" "Missing makeself binary"
+fi
+if [ $PLATFORM = "all" -o $PLATFORM = "linux-64" ]; then
+  check_requirement "Linux 64 Java" "ls jdk-*-linux-x64.zip" "Missing Linux 64 Java (https://github.com/ojdkbuild/contrib_jdk11u-ci/releases)"
+fi
+if [ $PLATFORM = "all" -o $PLATFORM = "linux-arm" ]; then
+  check_requirement "Linux ARM Java" "ls jdk-*-linux-armhf.zip" "Missing Linux ARM Java (https://github.com/ojdkbuild/contrib_jdk11u-aarch32-ci/releases)"
+fi
+if [ $PREREQ = false ]; then
+  info "Missing build requirements, aborting..."
+  exit 1
+else
+  info "Building..."
+fi
 
 prepare () {
+  info "Generating app.min.js"
+  ../traccar-web/tools/minify.sh >/dev/null
+  ok "Created app.min.js"
 
-  tar -xzf wrapper-delta-pack-*.tar.gz
-  mv wrapper-delta-pack-*/ wrapper/
+  mkdir -p out/{conf,data,lib,logs,web,schema,templates}
 
-  ../tools/minify.sh
+  cp ../target/tracker-server.jar out
+  cp ../target/lib/* out/lib
+  cp ../schema/* out/schema
+  cp -r ../templates/* out/templates
+  cp -r ../traccar-web/web/* out/web
+  cp default.xml out/conf
+  cp traccar.xml out/conf
 
-  innoextract innosetup-*.exe
-  echo "If you got any errors here try isetup version 5.5.5 (or check what versions are supported by 'innoextract -v')"
+  if [ $PLATFORM = "all" -o $PLATFORM = "windows-64" ]; then
+	innoextract i*setup-*.exe >/dev/null
+	info "If you got any errors here try Inno Setup version 5.5.5 (or check supported versions using 'innoextract -v')"
+  fi
 }
 
 cleanup () {
+  info "Cleanup"
+  rm ../traccar-web/web/app.min.js
 
-  rm -rf wrapper/
-
-  rm ../web/app.min.js
-
-  rm -rf app/
+  rm -r out
+  if [ $PLATFORM = "all" -o $PLATFORM = "windows-64" ]; then
+	rm -r tmp
+	rm -r app
+  fi
 }
 
-prepare_windows_64 () {
-  unzip wrapper-windows-x86-64-*.zip
-  cp wrapper-windows-*/bin/wrapper.exe wrapper/bin/wrapper-windows-x86-32.exe
-  cp wrapper-windows-*/lib/wrapper.dll wrapper/lib/wrapper-windows-x86-32.dll
-  cp wrapper-windows-*/lib/wrapper.jar wrapper/lib/wrapper.jar
-  rm -rf wrapper-windows-*/
-}
-
-prepare_linux_32 () {
-  cp unix/setup.sh out
-  cp wrapper/bin/wrapper-linux-x86-32 out/bin/wrapper
-  cp wrapper/lib/libwrapper-linux-x86-32.so out/lib/libwrapper.so
-}
-
-prepare_linux_64 () {
-  cp unix/setup.sh out
-  cp wrapper/bin/wrapper-linux-x86-64 out/bin/wrapper
-  cp wrapper/lib/libwrapper-linux-x86-64.so out/lib/libwrapper.so
-}
-
-prepare_linux_arm () {
-  cp unix/linux-arm-setup.sh out/setup.sh
-  cp wrapper/bin/wrapper-linux-armel-32 out/bin
-  cp wrapper/bin/wrapper-linux-armhf-32 out/bin
-  cp wrapper/lib/libwrapper-linux-armel-32.so out/lib
-  cp wrapper/lib/libwrapper-linux-armhf-32.so out/lib
-}
-
-prepare_macosx_64 () {
-  cp unix/setup.sh out
-  cp wrapper/bin/wrapper-macosx-universal-64 out/bin/wrapper
-  cp wrapper/lib/libwrapper-macosx-universal-64.jnilib out/lib/libwrapper.jnilib
+package_other () {
+  info "Building Zip archive"
+  cp README.txt out
+  cd out
+  zip -q -r ../traccar-other-$VERSION.zip *
+  cd ..
+  rm out/README.txt
+  ok "Created Zip archive"
 }
 
 package_windows () {
-
-  if [ "$#" -gt 1 ]
-  then
-    eval $2
-  fi
-
-  wine app/ISCC.exe windows/traccar.iss
-
-  zip -j traccar-$1-$VERSION.zip windows/Output/setup.exe README.txt
-
-  rm -rf windows/Output/
-  rm -rf tmp/
+  info "Building Windows 64 installer"
+  unzip -q -o java-*.windows.ojdkbuild.x86_64.zip
+  jlink --module-path java-*.windows.ojdkbuild.x86_64/jmods --add-modules java.se,jdk.charsets,jdk.crypto.ec --output out/jre
+  rm -rf java-*.windows.ojdkbuild.x86_64
+  wine app/ISCC.exe traccar.iss >/dev/null
+  rm -rf out/jre
+  zip -q -j traccar-windows-64-$VERSION.zip Output/traccar-setup.exe README.txt
+  rm -r Output
+  ok "Created Windows 64 installer"
 }
 
-package_unix () {
+package_linux () {
+  cp setup.sh out
+  cp traccar.service out
 
-  mkdir -p out/{bin,conf,data,lib,logs,web}
+  unzip -q -o jdk-*-linux-$1.zip
+  jlink --module-path jdk-*-linux-$1/jmods --add-modules java.se,jdk.charsets,jdk.crypto.ec --output out/jre
+  rm -rf jdk-*-linux-$1
+  makeself --quiet --notemp out traccar.run "traccar" ./setup.sh
+  rm -rf out/jre
 
-  cp wrapper/src/bin/sh.script.in out/bin/traccar
-  cp wrapper/lib/wrapper.jar out/lib
-  cp wrapper/src/conf/wrapper.conf.in out/conf/wrapper.conf
-
-  sed -i 's/tail -1/tail -n 1/g' out/bin/traccar
-  chmod +x out/bin/traccar
-
-  cp ../target/tracker-server.jar out
-  cp ../target/lib/* out/lib
-  cp ../database/* out/data
-  cp -r ../web/* out/web
-  cp unix/traccar.xml out/conf
-
-  sed -i 's/@app.name@/traccar/g' out/bin/traccar
-  sed -i 's/@app.long.name@/traccar/g' out/bin/traccar
-
-  sed -i '/wrapper.java.classpath.1/i\wrapper.java.classpath.2=../tracker-server.jar' out/conf/wrapper.conf
-  sed -i '/wrapper.app.parameter.1/i\wrapper.app.parameter.2=../conf/traccar.xml' out/conf/wrapper.conf
-  sed -i 's/wrapper.java.additional.1=/wrapper.java.additional.1=-Dfile.encoding=UTF-8/g' out/conf/wrapper.conf
-  sed -i 's/<YourMainClass>/org.traccar.Main/g' out/conf/wrapper.conf
-  sed -i 's/@app.name@/traccar/g' out/conf/wrapper.conf
-  sed -i 's/@app.long.name@/traccar/g' out/conf/wrapper.conf
-  sed -i 's/@app.description@/traccar/g' out/conf/wrapper.conf
-  sed -i 's/wrapper.logfile=..\/logs\/wrapper.log/wrapper.logfile=..\/logs\/wrapper.log.YYYYMMDD\nwrapper.logfile.rollmode=DATE/g' out/conf/wrapper.conf
-
-  eval $2
-
-  makeself out traccar.run "traccar" "chmod +x setup.sh ; ./setup.sh"
-  zip -j traccar-$1-$VERSION.zip traccar.run README.txt
+  zip -q -j traccar-linux-$2-$VERSION.zip traccar.run README.txt
 
   rm traccar.run
-  rm -rf out/
+  rm out/setup.sh
+  rm out/traccar.service
 }
 
-package_universal () {
+package_linux_64 () {
+  info "Building Linux 64 installer"
+  package_linux x64 64
+  ok "Created Linux 64 installer"
+}
 
-  mkdir -p out/{conf,data,lib,logs,web}
-
-  cp ../target/tracker-server.jar out
-  cp ../target/lib/* out/lib
-  cp ../database/* out/data
-  cp -r ../web/* out/web
-  cp windows/traccar.xml out/conf
-  cp README.txt out
-
-  cd out
-  zip -r ../traccar-$1-$VERSION.zip * README.txt
-  cd ..
-
-  rm -rf out/
+package_linux_arm () {
+  info "Building Linux ARM installer"
+  package_linux armhf arm
+  ok "Created Linux ARM installer"
 }
 
 prepare
 
-package_windows "windows-32"
-package_windows "windows-64" "prepare_windows_64"
-package_unix "linux-32" "prepare_linux_32"
-package_unix "linux-64" "prepare_linux_64"
-package_unix "linux-arm" "prepare_linux_arm"
-package_unix "macosx-64" "prepare_macosx_64"
-package_universal "other"
+case $PLATFORM in
+  all)
+	package_linux_64
+	package_linux_arm
+	package_windows
+	package_other
+	;;
+
+  linux-64)
+	package_linux_64
+	;;
+
+  linux-arm)
+	package_linux_arm
+	;;
+
+  windows-64)
+	package_windows
+	;;
+
+  other)
+	package_other
+	;;
+esac
 
 cleanup
+
+ok "Done"
